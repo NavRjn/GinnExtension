@@ -147,19 +147,19 @@ class Constraints:
             for name, data in self.constraints.items():
                 func = data["func"]
                 params = data["params"]
-                loss = func(field, coords, **params)
+                loss = func(field=field, coords=coords, **params)
                 all_losses[name] = loss
             return all_losses
         elif loss_type is not None:
             params = self.constraints[loss_type]["params"]
-            return self.constraints[loss_type]["func"](field, coords, **params)
+            return self.constraints[loss_type]["func"](field=field, coords=coords, **params)
         else:
             total_loss = 0.0
             for name, data in self.constraints.items():
                 func = data['func']
                 weight = data['weight']
                 params = data['params']
-                loss = func(field, coords, **params)
+                loss = func(field=field, coords=coords, **params)
                 total_loss += weight * loss
             return total_loss
 
@@ -232,18 +232,19 @@ class ConstraintTrainer(pl.LightningModule):
         field = self.model(coords)
 
         # loss = abs(field.mean()) # Dummy loss
-        cl = self.constraints.get_loss(self.model, coords, "all")
-        loss = self.constraints.get_loss(cl, coords)
+        field = self.model(coords)
+        cl = self.constraints.get_loss(field=field, coords=coords, loss_type="all")
+        loss = self.constraints.get_loss(field, coords)
 
         self.log_dict(
-            {"loss": loss, "area": cl["area"], "tv": cl["tv"], "cont": cl["cont"], "center": cl["cent"]},
+            {"loss": loss, **cl},
             prog_bar=True, on_step=True, on_epoch=True
         )
         return loss
 
     def on_train_start(self) -> None:
         self.sdf.update(model=self.model, device_=self.device)
-        self.sdf.plot_field(True, 5)
+        self.sdf.plot_field(True, 50)
 
     def on_train_epoch_end(self):
         self.sdf.update(model=self.model, device_=self.device)
