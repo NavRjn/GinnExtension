@@ -1,0 +1,22 @@
+# Core dependencies
+torch>=1.12.0
+torchvision>=0.13.0
+pytorch-lightning>=1.8.0
+
+# Scientific computing
+numpy>=1.21.0
+matplotlib>=3.5.0
+
+# Visualization
+plotly>=5.0.0
+
+# Experiment tracking
+wandb>=0.12.0
+
+# Development dependencies (optional)
+jupyter>=1.0.0
+ipython>=8.0.0
+
+# Optional: For enhanced performance
+# torch-geometric>=2.0.0  # For graph neural networks
+# torch-audio>=0.12.0     # For audio processing extensions
