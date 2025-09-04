@@ -26,6 +26,31 @@ pio.renderers.default = "browser"
 
 # ---------- Signed Distance Functions ---------- #
 class SDF:
+    """
+        Signed Distance Field (SDF) representation.
+
+        This class can store a scalar field either from:
+        - an analytic function (`fun`)
+        - a model (e.g., neural network) (`model`)
+        - or directly provided field values (`values`).
+
+        The field is stored on a grid defined by either:
+        - limits `xy_lims` (automatic meshgrid generation), or
+        - precomputed `grid_x`, `grid_y`.
+
+        Attributes
+        ----------
+        grid_x, grid_y : torch.Tensor
+            Meshgrid of x and y coordinates.
+        values : torch.Tensor
+            Computed scalar field values over the grid.
+        model : callable or None
+            Function/model that evaluates the field given input coordinates.
+        device : str
+            Torch device ("cpu" or "cuda").
+        fig : plotly.graph_objs.Figure or None
+            Cached plotly figure (if `plotly=True` was used in `plot_field`).
+        """
     def __init__(self, fun=None, model=None, grid_x=None, grid_y=None, values=None, xy_lims=None, device="cpu"):
         if xy_lims is not None:
             self.grid_y, self.grid_x = torch.meshgrid(torch.linspace(xy_lims[0], xy_lims[1], N),
@@ -121,6 +146,10 @@ class CircleSDF(SDF):
     def __init__(self, x0=(0, 0), r=1, xy_lims=(-1, 1, -1, 1)):
         model = lambda points: torch.asarray([abs(sqrt((x[0] - x0[0]) ** 2 + (x[1] - x0[1]) ** 2) - r) for x in points])
         super().__init__(model=model, xy_lims=xy_lims)
+
+
+class TuringSDF(SDF):
+    pass
 
 
 # ---------- Constraints ---------- #
