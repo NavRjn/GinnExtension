@@ -147,9 +147,49 @@ class CircleSDF(SDF):
         model = lambda points: torch.asarray([abs(sqrt((x[0] - x0[0]) ** 2 + (x[1] - x0[1]) ** 2) - r) for x in points])
         super().__init__(model=model, xy_lims=xy_lims)
 
-
+# TODO: Untested. LLM generated.
 class TuringSDF(SDF):
-    pass
+    def __init__(self, model=None, xy_lims=(-1, 1, -1, 1),
+                 Du=2.4e-5, Dv=1.2e-5, alpha=0.028, beta=0.057, device="cpu"):
+        """
+        A Turing pattern field (two channels: u, v).
+        model: nn.Module taking coords [B,2] → [B,2] for (u,v).
+        """
+        super().__init__(model=model, xy_lims=xy_lims, device=device)
+        self.Du, self.Dv = Du, Dv
+        self.alpha, self.beta = alpha, beta
+
+    def residuals(self, coords):
+        """Compute PDE residuals at coords (for loss)."""
+        coords.requires_grad_(True)
+        uv = self.model(coords)              # shape [B,2], columns = (u,v)
+        u, v = uv[:,0:1], uv[:,1:2]
+
+        # Laplacians via autograd (vectorized trick: grad-of-grad)
+        grads = torch.autograd.grad(u.sum(), coords, create_graph=True)[0]
+        lap_u = torch.autograd.grad(grads[:,0].sum(), coords, create_graph=True)[0][:,0] + \
+                torch.autograd.grad(grads[:,1].sum(), coords, create_graph=True)[0][:,1]
+        grads = torch.autograd.grad(v.sum(), coords, create_graph=True)[0]
+        lap_v = torch.autograd.grad(grads[:,0].sum(), coords, create_graph=True)[0][:,0] + \
+                torch.autograd.grad(grads[:,1].sum(), coords, create_graph=True)[0][:,1]
+
+        Ru = self.Du*lap_u.unsqueeze(-1) - u*v**2 + self.alpha*(1-u)
+        Rv = self.Dv*lap_v.unsqueeze(-1) + u*v**2 - (self.alpha+self.beta)*v
+        return Ru, Rv, u, v
+
+    def update(self, model=None, values=None, device_="cuda"):
+        # Override: update self.values with just one of the fields (say u) for visualization
+        if model is not None:
+            self.model = model
+            coords = torch.stack(
+                [self.grid_x.reshape(-1), self.grid_y.reshape(-1)], dim=-1
+            ).to(device_)
+            with torch.no_grad():
+                uv = model(coords)
+                self.values = uv[:,0].reshape(N, N)  # take u field
+        elif values is not None:
+            self.values = values
+
 
 
 # ---------- Constraints ---------- #

@@ -40,3 +40,42 @@ class FieldAttention(nn.Module):
         ctx = attn @ v  # (B, H)
 
         return self.mlp(ctx)  # (B, 1)
+
+
+# ------------------------------------------------ Turing models ---------------------------------------------------- #
+# Untested: LLM Generated
+class FourierFeatures(nn.Module):
+    def __init__(self, in_dim=2, mapping_size=64, scale=10.0):
+        super().__init__()
+        self.B = nn.Parameter(torch.randn(in_dim, mapping_size) * scale, requires_grad=False)  # fixed
+    def forward(self, x):  # x: [B, N, 2] or [N,2]
+        x_proj = (2 * torch.pi * x) @ self.B  # [N, mapping_size]
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
+class SmallDecoder(nn.Module):
+    def __init__(self, latent_dim=0, ff_dim=64, hidden=128, layers=4):
+        super().__init__()
+        input_dim = ff_dim * 2 + latent_dim  # if ff created with mapping_size=ff_dim
+        seq = []
+        seq.append(nn.Linear(input_dim, hidden))
+        seq.append(nn.ReLU())
+        for _ in range(layers-2):
+            seq.append(nn.Linear(hidden, hidden))
+            seq.append(nn.ReLU())
+        seq.append(nn.Linear(hidden, 2))  # outputs u, v
+        self.net = nn.Sequential(*seq)
+
+    def forward(self, coords, z=None):
+        # coords: [N,2] or [B,N,2] depending on batching
+        ff = self.fourier(coords)  # attach module instance -- # PROBLEM!!!: TODO: debug.
+        if z is not None:
+            # broadcast z to per-point
+            if z.dim()==2 and ff.dim()==2:
+                z_rep = z.repeat(ff.shape[0], 1)
+            else:
+                # handle batch dims as needed
+                pass
+            inp = torch.cat([ff, z_rep], dim=-1)
+        else:
+            inp = ff
+        return self.net(inp)  # shape [N,2] with columns u,v
