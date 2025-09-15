@@ -177,7 +177,7 @@ class TuringSDF(SDF):
         Rv = self.Dv*lap_v.unsqueeze(-1) + u*v**2 - (self.alpha+self.beta)*v
         return Ru, Rv, u, v
 
-    def update(self, model=None, values=None, device_="cuda"):
+    def update(self, fun=None, model=None, values=None, device_="cuda"):
         # Override: update self.values with just one of the fields (say u) for visualization
         if model is not None:
             self.model = model
@@ -198,38 +198,42 @@ class Constraints:
     def __init__(self):
         self.constraints = {}
 
-    def add(self, weight=1.0, **params):
+    def add(self, weight=1.0, needs_residuals=False, **params):
         def decorator(func):
             name = func.__name__
             self.constraints[name] = {
                 "func": func,
                 "weight": weight,
-                "params": params
+                "params": params,
+                "needs_residuals": needs_residuals
             }
             return func
 
         return decorator
 
-    def get_loss(self, field, coords, loss_type=None):
+    def get_loss(self, field, coords, residuals=None, loss_type=None):
+        # Pass residuals if constraint asked for them
+        def call_constraint(data, name, d):
+            args = {
+                "field": field,
+                "coords": coords,
+                **d["params"]
+            }
+            if d["needs_residuals"]:
+                args["residuals"] = residuals
+            return d["func"](**args)
+
         if loss_type == "all":
-            all_losses = dict()
-            for name, data in self.constraints.items():
-                func = data["func"]
-                params = data["params"]
-                loss = func(field=field, coords=coords, **params)
-                all_losses[name] = loss
+            all_losses = {}
+            for name, d in self.constraints.items():
+                all_losses[name] = call_constraint(field, name, d)
             return all_losses
         elif loss_type is not None:
-            params = self.constraints[loss_type]["params"]
-            return self.constraints[loss_type]["func"](field=field, coords=coords, **params)
+            return call_constraint(field, loss_type, self.constraints[loss_type])
         else:
             total_loss = 0.0
-            for name, data in self.constraints.items():
-                func = data['func']
-                weight = data['weight']
-                params = data['params']
-                loss = func(field=field, coords=coords, **params)
-                total_loss += weight * loss
+            for name, d in self.constraints.items():
+                total_loss += d["weight"] * call_constraint(field, name, d)
             return total_loss
 
 
@@ -300,9 +304,11 @@ class ConstraintTrainer(pl.LightningModule):
         coords = self.sample_coords(self.n_points).requires_grad_()
         field = self.model(coords)
 
+        # If sdf has residuals, compute once
+        residuals = self.sdf.residuals(coords) if hasattr(self.sdf, "residuals") else None
+
         # loss = abs(field.mean()) # Dummy loss
-        field = self.model(coords)
-        cl = self.constraints.get_loss(field=field, coords=coords, loss_type="all")
+        cl = self.constraints.get_loss(field=field, coords=coords, residuals=residuals, loss_type="all")
         loss = self.constraints.get_loss(field, coords)
 
         self.log_dict(
