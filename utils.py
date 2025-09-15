@@ -35,7 +35,7 @@ class SDF:
         - or directly provided field values (`values`).
 
         The field is stored on a grid defined by either:
-        - limits `xy_lims` (automatic meshgrid generation), or
+        - limits `domain` (automatic meshgrid generation), or
         - precomputed `grid_x`, `grid_y`.
 
         Attributes
@@ -51,15 +51,15 @@ class SDF:
         fig : plotly.graph_objs.Figure or None
             Cached plotly figure (if `plotly=True` was used in `plot_field`).
         """
-    def __init__(self, fun=None, model=None, grid_x=None, grid_y=None, values=None, xy_lims=None, device="cpu"):
-        if xy_lims is not None:
-            self.grid_y, self.grid_x = torch.meshgrid(torch.linspace(xy_lims[0], xy_lims[1], N),
-                                                      torch.linspace(xy_lims[2], xy_lims[3], N), indexing="ij")
+    def __init__(self, fun=None, model=None, grid_x=None, grid_y=None, values=None, domain=None, device="cpu"):
+        if domain is not None:
+            self.grid_y, self.grid_x = torch.meshgrid(torch.linspace(domain[0], domain[1], N),
+                                                      torch.linspace(domain[0], domain[1], N), indexing="ij")
         else:
             assert grid_x is not None and grid_y is not None
             self.grid_x, self.grid_y = grid_x, grid_y
 
-        self.values, self.model, self.values = None, None, None
+        self.values, self.model, self.values = None, None, None  # TODO: bug self.value
         self.update(fun, model, values, device_=device)
 
         self.device = device
@@ -77,9 +77,11 @@ class SDF:
             N_ = N if newN is None else newN
             grid_y, grid_x = torch.meshgrid(torch.linspace(domain[0], domain[1], N_),
                                             torch.linspace(domain[0], domain[1], N_))
-            coords = torch.stack([self.grid_x.reshape(-1), self.grid_y.reshape(-1)], dim=-1).to(self.device)
+            coords = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1).to(self.device)
             with torch.no_grad():
-                values = self.model(coords).reshape(N_, N_)
+                values = self.model(coords)
+                values = values if preprocess is None else preprocess(values)
+                values = values.reshape(N_, N_)
         if not plotly:
             plt.contourf(grid_x.cpu().numpy(), grid_y.cpu().numpy(), values.cpu(), levels=layers)
             plt.colorbar()
@@ -143,19 +145,19 @@ class SDF:
 
 
 class CircleSDF(SDF):
-    def __init__(self, x0=(0, 0), r=1, xy_lims=(-1, 1, -1, 1)):
+    def __init__(self, x0=(0, 0), r=1, domain=(-1,1)):
         model = lambda points: torch.asarray([abs(sqrt((x[0] - x0[0]) ** 2 + (x[1] - x0[1]) ** 2) - r) for x in points])
-        super().__init__(model=model, xy_lims=xy_lims)
+        super().__init__(model=model, domain=domain)
 
 # TODO: Untested. LLM generated.
 class TuringSDF(SDF):
-    def __init__(self, model=None, xy_lims=(-1, 1, -1, 1),
+    def __init__(self, model=None, domain=(-1, 1),
                  Du=2.4e-5, Dv=1.2e-5, alpha=0.028, beta=0.057, device="cpu"):
         """
         A Turing pattern field (two channels: u, v).
         model: nn.Module taking coords [B,2] → [B,2] for (u,v).
         """
-        super().__init__(model=model, xy_lims=xy_lims, device=device)
+        super().__init__(model=model, domain=domain, device=device)
         self.Du, self.Dv = Du, Dv
         self.alpha, self.beta = alpha, beta
 
