@@ -3,18 +3,54 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class FieldMLP(nn.Module):
-    def __init__(self, in_dim=2, hidden=128, depth=4, out_dim=1):
+    def __init__(self, in_dim=2, hidden=128, depth=4, out_dim=1, init="xavier", use_periodic=False):
         super().__init__()
+        self.use_periodic = use_periodic
+
+        # input dimension: 2 (raw coords) or 4 (periodic encoding)
+        eff_in_dim = 4 if use_periodic else in_dim
+
         layers = []
-        dims = [in_dim] + [hidden ] *(depth -1) + [out_dim]
-        for i in range(len(dims ) -1):
-            layers += [nn.Linear(dims[i], dims[ i +1])]
-            if i < len(dims ) -2:
-                layers += [nn.SiLU()]     # smooth activation is helpful for gradients
+        dims = [eff_in_dim] + [hidden] * (depth - 1) + [out_dim]
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            if i < len(dims) - 2:
+                layers.append(nn.SiLU())  # smooth activations
+
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):   # x: (B, 2) points in [-1,1]^2
-        return self.net(x)  # (B, 1)
+        # apply initialization
+        if init == "xavier":
+            self._init_xavier()
+        elif init == "kaiming":
+            self._init_kaiming()
+
+    def forward(self, x):
+        if self.use_periodic:
+            x = self._periodic_encoding(x)
+        return self.net(x)
+
+    @staticmethod
+    def _periodic_encoding(x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B,2) with values in [0,1]
+        returns: (B,4) with sine/cosine encoding
+        """
+        x = 2 * torch.pi * x
+        return torch.cat([torch.sin(x), torch.cos(x)], dim=-1)
+
+    # --- init schemes ---
+    def _init_xavier(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def _init_kaiming(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
+                nn.init.zeros_(m.bias)
 
 
 class FieldAttention(nn.Module):
