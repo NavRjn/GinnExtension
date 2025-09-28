@@ -162,22 +162,29 @@ class TuringSDF(SDF):
         self.alpha, self.beta = alpha, beta
 
     def residuals(self, coords):
-        """Compute PDE residuals at coords (for loss)."""
-        coords.requires_grad_(True)
-        uv = self.model(coords)              # shape [B,2], columns = (u,v)
-        u, v = uv[:,0:1], uv[:,1:2]
+        coords = coords.requires_grad_(True)
+        uv = self.model(coords)
+        u = uv[:, 0:1]
+        v = uv[:, 1:2]
 
-        # Laplacians via autograd (vectorized trick: grad-of-grad)
-        grads = torch.autograd.grad(u.sum(), coords, create_graph=True)[0]
-        lap_u = torch.autograd.grad(grads[:,0].sum(), coords, create_graph=True)[0][:,0] + \
-                torch.autograd.grad(grads[:,1].sum(), coords, create_graph=True)[0][:,1]
-        grads = torch.autograd.grad(v.sum(), coords, create_graph=True)[0]
-        lap_v = torch.autograd.grad(grads[:,0].sum(), coords, create_graph=True)[0][:,0] + \
-                torch.autograd.grad(grads[:,1].sum(), coords, create_graph=True)[0][:,1]
+        # gradients
+        grad_u = torch.autograd.grad(u.sum(), coords, create_graph=True)[0]  # (N,2)
+        grad_v = torch.autograd.grad(v.sum(), coords, create_graph=True)[0]  # (N,2)
 
-        Ru = self.Du*lap_u.unsqueeze(-1) - u*v**2 + self.alpha*(1-u)
-        Rv = self.Dv*lap_v.unsqueeze(-1) + u*v**2 - (self.alpha+self.beta)*v
-        return Ru, Rv, u, v
+        # laplacians (second derivatives)
+        d2u_x = torch.autograd.grad(grad_u[:, 0].sum(), coords, create_graph=True)[0][:, 0]
+        d2u_y = torch.autograd.grad(grad_u[:, 1].sum(), coords, create_graph=True)[0][:, 1]
+        lap_u = d2u_x + d2u_y
+
+        d2v_x = torch.autograd.grad(grad_v[:, 0].sum(), coords, create_graph=True)[0][:, 0]
+        d2v_y = torch.autograd.grad(grad_v[:, 1].sum(), coords, create_graph=True)[0][:, 1]
+        lap_v = d2v_x + d2v_y
+
+        # residuals
+        Ru = self.Du * lap_u.unsqueeze(-1) - u * v ** 2 + self.alpha * (1 - u)
+        Rv = self.Dv * lap_v.unsqueeze(-1) + u * v ** 2 - (self.alpha + self.beta) * v
+
+        return Ru, Rv, u, v, grad_u, grad_v
 
     def update(self, fun=None, model=None, values=None, device_="cuda"):
         # Override: update self.values with just one of the fields (say u) for visualization
@@ -311,7 +318,7 @@ class ConstraintTrainer(pl.LightningModule):
 
         # loss = abs(field.mean()) # Dummy loss
         cl = self.constraints.get_loss(field=field, coords=coords, residuals=residuals, loss_type="all")
-        loss = self.constraints.get_loss(field, coords)
+        loss = self.constraints.get_loss(field, coords, residuals=residuals)
 
         self.log_dict(
             {"loss": loss, **cl},
@@ -330,27 +337,66 @@ class ConstraintTrainer(pl.LightningModule):
 
     def on_train_end(self):
         # Build plotly animation
-        frames = [go.Frame(
-            data=[go.Contour(z=z, x=self.sdf.grid_x[0, :].cpu().numpy(),
-                             y=self.sdf.grid_y[:, 0].cpu().numpy())],
-            name=f"epoch{k}"
-        ) for k, z in enumerate(self.all_frames)]
+        frames = [
+            go.Frame(
+                data=[go.Contour(
+                    z=z,
+                    x=self.sdf.grid_x[0, :].cpu().numpy(),
+                    y=self.sdf.grid_y[:, 0].cpu().numpy()
+                )],
+                name=f"epoch{k}"
+            )
+            for k, z in enumerate(self.all_frames)
+        ]
 
         fig = go.Figure(
             data=frames[0].data,
             frames=frames
         )
 
+        # --- Slider ---
+        sliders = [{
+            "steps": [
+                {
+                    "args": [[frame.name], {"frame": {"duration": 0, "redraw": True},
+                                            "mode": "immediate",
+                                            "transition": {"duration": 0}}],
+                    "label": frame.name,
+                    "method": "animate"
+                }
+                for frame in frames
+            ],
+            "transition": {"duration": 0},
+            "x": 0.1,
+            "y": -0.05,
+            "len": 0.9
+        }]
+
+        # --- Play/Pause buttons ---
         fig.update_layout(
             updatemenus=[{
+                "type": "buttons",
+                "x": 0.05,
+                "y": 1.15,
                 "buttons": [
-                    {"args": [None, {"frame": {"duration": 200, "redraw": True},
-                                     "fromcurrent": True}], "label": "▶ Play", "method": "animate"},
-                    {"args": [[None], {"frame": {"duration": 0, "redraw": False},
-                                       "mode": "immediate"}], "label": "⏸ Pause", "method": "animate"}
+                    {
+                        "args": [None, {"frame": {"duration": 200, "redraw": True},
+                                        "fromcurrent": True,
+                                        "transition": {"duration": 100}}],
+                        "label": "▶ Play",
+                        "method": "animate"
+                    },
+                    {
+                        "args": [[None], {"frame": {"duration": 0, "redraw": False},
+                                          "mode": "immediate"}],
+                        "label": "⏸ Pause",
+                        "method": "animate"
+                    }
                 ]
-            }]
+            }],
+            sliders=sliders
         )
+
         fig.show()
 
 

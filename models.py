@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 class FieldMLP(nn.Module):
     def __init__(self, in_dim=2, hidden=128, depth=4, out_dim=1, init="xavier", use_periodic=False):
@@ -51,6 +52,60 @@ class FieldMLP(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
                 nn.init.zeros_(m.bias)
+
+
+class SIREN(nn.Module):
+    def __init__(self, in_dim=2, hidden=[256,128], out_dim=1, omega_0=3.0, use_periodic=True):
+        super().__init__()
+        self.omega_0 = omega_0
+        self.use_periodic = use_periodic
+
+        # input dim (periodic encoding → 4)
+        eff_in_dim = 4 if use_periodic else in_dim
+
+        # build layers
+        dims = [eff_in_dim] + hidden + [out_dim]
+        layers = []
+        for i in range(len(dims)-1):
+            in_f, out_f = dims[i], dims[i+1]
+            is_last = (i == len(dims)-2)
+
+            linear = nn.Linear(in_f, out_f)
+            self._init_siren(linear, is_first=(i==0), omega_0=omega_0)
+            layers.append(linear)
+
+            if not is_last:
+                layers.append(Sine(omega_0))
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        if self.use_periodic:
+            x = self._periodic_encoding(x)
+        return self.net(x)
+
+    @staticmethod
+    def _periodic_encoding(x: torch.Tensor) -> torch.Tensor:
+        x = 2 * torch.pi * x  # expects [0,1]^2 input
+        return torch.cat([torch.sin(x), torch.cos(x)], dim=-1)
+
+    @staticmethod
+    def _init_siren(layer, is_first=False, omega_0=30.0):
+        in_dim = layer.weight.size(1)
+        if is_first:
+            bound = 1.0 / in_dim
+        else:
+            bound = np.sqrt(6 / in_dim) / omega_0
+        nn.init.uniform_(layer.weight, -bound, bound)
+        nn.init.zeros_(layer.bias)
+
+
+class Sine(nn.Module):
+    def __init__(self, omega_0=30.0):
+        super().__init__()
+        self.omega_0 = omega_0
+    def forward(self, x):
+        return torch.sin(self.omega_0 * x)
 
 
 class FieldAttention(nn.Module):
